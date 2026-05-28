@@ -58,3 +58,5 @@ if __name__ == "__main__":
                 print(f"\n🤖 IA (Groq): {respuesta['output']}\n")
             except Exception as e:
                 print(f"\n❌ Error al procesar: {e}\n")
+
+                # Modificació de prova en la branca dev 
