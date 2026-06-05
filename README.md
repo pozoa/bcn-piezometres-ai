@@ -4,17 +4,19 @@ Aquest projecte és un **agent de dades intel·ligent** que utilitza Intel·lig�
 
 ## 🛠️ Tecnologies utilitzades
 
-* **Python** (Pandas per a la gestió de dades)
-* **LangChain** (per crear l'agent de dades)
-* **Groq API** (Model `llama-3.1`)
+* **Python** (Pandas per a la gestió i cerca de dades en el CSV)
+* **LangChain** (per crear l'arquitectura de l'agent i la memòria)
+* **Groq API** (Model `llama-3.1` com a motor de text)
+* **Visual Studio Code** (Entorn de desenvolupament integrat amb entorns virtuals `venv`)
+* **GitHub Copilot** (Asstistent de IA utilitzat per a la generació i optimització del codi)
 
 ## 🧠 Millores de la branca `dev`
-<<<<<<< HEAD
-=======
-
->>>>>>> dev
 * **Memòria de conversa:** L'assistent recorda el context i les preguntes anteriors.
 * **Integració amb Google Maps:** Si li demanes veure un pou al mapa, l'assistent obrirà automàticament el teu navegador Chrome en la ubicació exacta.
+* **Cerca exacta per CSV:** L'agent creua les teves peticions (Ex: "abre pozo 5") directament amb la columna `Codi_Estacio_ACA`, extreu la latitud/longitud d'aquest fitxer i mapifica el resultat.
+* **Memòria de conversa:** L'assistent recorda el context i les preguntes anteriors.
+* **Integració amb Google Maps:** Obre automàticament el navegador Chrome en la ubicació exacta del pou detectat.
+
 
 ## 🚀 Com executar el projecte per primera vegada
 
