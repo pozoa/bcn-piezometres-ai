@@ -1,135 +1,211 @@
 import os
 import pandas as pd
-import webbrowser  # LIBRERÍA NATIVA PARA ABRIR EL NAVEGADOR
+import streamlit as st
+import folium
+from streamlit_folium import st_folium
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_experimental.agents.agent_toolkits import create_pandas_dataframe_agent
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import tool
 
-# Cargar variables de entorno del archivo .env
+# 1. Configuración de la página web de Streamlit
+st.set_page_config(page_title="Agent de Pous de Barcelona", layout="wide", page_icon="🤖")
+
+# Cargar variables de entorno
 load_dotenv()
 
-# Arxiu de dades global
+# Archivo de datos global
 ARCHIVO_CSV = "piezometres_equipaments.csv"
 
-try:
-    # Carreguem el DataFrame globalment perquè tant l'agent com la Tool puguin accedir-hi
-    df_global = pd.read_csv(ARCHIVO_CSV)
-except Exception as e:
-    print(f"❌ Error crític al carregar el fitxer de dades: {e}")
-    df_global = None
+@st.cache_data
+def cargar_datos():
+    try:
+        df = pd.read_csv(ARCHIVO_CSV)
+        # Limpieza inicial para asegurar que los strings no tengan espacios ocultos
+        for col in df.columns:
+            if df[col].dtype == 'object':
+                df[col] = df[col].str.strip()
+        return df
+    except Exception as e:
+        st.error(f"❌ Error al carregar el fitxer de dades ({ARCHIVO_CSV}): {e}")
+        return None
 
+df_global = cargar_datos()
 
-# 1. DEFINIMOS LA NUEVA HERRAMIENTA PERSONALIZADA MEJORADA
+# 2. Inicializar Estados de la Sesión en Streamlit (Memoria visual)
+if "historial_conversacion" not in st.session_state:
+    st.session_state.historial_conversacion = []
+
+if "coordenadas_mapa" not in st.session_state:
+    # Coordenadas por defecto (Centro de Barcelona)
+    st.session_state.coordenadas_mapa = {"lat": 41.3851, "lon": 2.1734, "zoom": 12, "nombre": "Barcelona"}
+
+# 3. HERRAMIENTA VINCULANTE PARA EL MAPA
 @tool
-def obrir_mapa_per_codi_aca(codi_aca: str) -> str:
+def actualizar_mapa_interactivo(codi_aca: str) -> str:
     """
-    Obre el navegador web amb Google Maps a la ubicació exacta del pou utilitzant el seu codi 'Codi_Estacio_ACA'.
-    S'ha d'utilitzar SEMPRE que l'usuari demani obrir, veure, localitzar o mostrar un pou o piezòmetre específic al mapa (Ex: 'abre pozo 5', 'veure el pou 22').
-    L'argument ha de ser el codi numèric o de text que correspon a la columna Codi_Estacio_ACA.
+    Actualitza el mapa integrat a la pantalla amb la ubicació del pou utilitzant el text o número exacte de 'Codi_Estacio_ACA'.
+    S'ha d'utilitzar ÚNICAMENT quan l'usuari demani explícitament veure o localitzar un pou concret (Ex: 'Codi_Estacio_ACA 5', 'veure el pou 22').
+    NO s'ha d'utilitzar per llistats, recomptes o consultes generals.
     """
     if df_global is None:
-        return "Error: La base de dades de pous no està disponible."
+        return "Error: La base de dades no està disponible."
     
     try:
-        # Netegem l'input per evitar espais en blanc i extreure només el text net
         codi_cercat = str(codi_aca).strip()
         
-        # Si la IA envia text com "pozo 5", intentem extreure només el número o la referència neta
-        if "pozo" in codi_cercat.lower():
-            codi_cercat = codi_cercat.lower().replace("pozo", "").strip()
-        if "pou" in codi_cercat.lower():
-            codi_cercat = codi_cercat.lower().replace("pou", "").strip()
-
-        # Busquem exactament la fila a la columna corresponent convertint a text per seguretat
-        fila = df_global[df_global['Codi_Estacio_ACA'].astype(str).str.strip() == codi_cercat]
+        # Buscar coincidencia exacta en la columna Codi_Estacio_ACA
+        fila = df_global[df_global['Codi_Estacio_ACA'].astype(str) == codi_cercat]
         
-        # Si no es troba exactament pel codi, fem una cerca parcial (per si de cas)
+        # Si falla, buscar coincidencia parcial
         if fila.empty:
             fila = df_global[df_global['Codi_Estacio_ACA'].astype(str).str.contains(codi_cercat, case=False, na=False)]
             
         if fila.empty:
-            return f"No s'ha trobat cap pou o estació que coincideixi amb el codi Codi_Estacio_ACA: '{codi_cercat}' dins del CSV."
+            return f"No s'ha trobat cap registre que coincideixi exactament amb el Codi_Estacio_ACA: '{codi_cercat}' al CSV."
         
-        # Extraiem les coordenades de la primera fila que coincideixi
-        latitud = fila.iloc[0]['Latitud']
-        longitud = fila.iloc[0]['Longitud']
-        nom_estacio = fila.iloc[0].get('Nom_Estacio', codi_cercat)
+        latitud = float(fila.iloc[0]['Latitud'])
+        longitud = float(fila.iloc[0]['Longitud'])
+        nom_estacio = fila.iloc[0].get('Nom_Estacio', f"Pou {codi_cercat}")
         
-        # Construïm la URL pública de Google Maps amb les coordenades reals extretes del CSV
-        url = f"http://maps.google.com/?q={latitud},{longitud}"
+        st.session_state.coordenadas_mapa = {
+            "lat": latitud,
+            "lon": longitud,
+            "zoom": 16,
+            "nombre": f"{nom_estacio} (ACA: {codi_cercat})"
+        }
         
-        # Obrim el navegador web predeterminat
-        webbrowser.open(url)
-        
-        return f"S'ha obert correctament Google Maps per al pou {nom_estacio} (Codi ACA: {codi_cercat}) a les coordenades: {latitud}, {longitud}."
+        return f"S'ha mogut el mapa correctament al pou {nom_estacio} (Codi ACA: {codi_cercat})."
     except Exception as e:
-        return f"No s'ha pogut obrir el navegador o processar les dades: {e}"
+        return f"Error al processar el mapa: {e}"
 
-
-def iniciar_asistente_ia():
-    if df_global is None:
+# 4. CONFIGURACIÓN DEL AGENTE ULTRA-ESTRICTO CON EL CSV
+def obtener_agente():
+    if df_global is None or not os.getenv("GROQ_API_KEY"):
         return None
-
-    # Configurar el modelo de IA Gratuito de Groq
+    
     llm = ChatGroq(
         model="llama-3.1-8b-instant",
-        temperature=0,
+        temperature=0,  # Temperatura 0 para evitar alucinaciones e inventos
         groq_api_key=os.getenv("GROQ_API_KEY")
     )
-
-    # PASSEM LA NOVA EINA AL VECTOR D'extra_tools I CONFIGUREM EL PREFIX AGÈNTIC
-    agent = create_pandas_dataframe_agent(
+    
+    # Prefix reforzado para forzar el uso de código Pandas real sobre las columnas del CSV
+    prefix_estricto = (
+        "Ets un agent de dades connectat directament al fitxer CSV 'piezometres_equipaments.csv'.\n"
+        "La teva única font de veritat són les dades d'aquest DataFrame. Està prohibit inventar dades, llistats o coordenades.\n\n"
+        "INSTRUCCIONS DE LOGICA CRÍTIQUES:\n"
+        "1. Si l'usuari et pregunta per una columna com 'Codi_Estacio_ACA', 'Nom_Estacio', 'Districte' o qualsevol altra, "
+        "executa SEMPRE codi Python (Ex: `df['Codi_Estacio_ACA'].unique()`) per extreure els valors reals exactes del fitxer.\n"
+        "2. Si l'usuari et demana directament veure, mostrar o obrir un codi específic al mapa (Ex: 'Codi_Estacio_ACA 5' o 'veure pou 12'), "
+        "identifica primer el valor alfanumèric i crida immediatament l'eina 'actualizar_mapa_interactivo' passant-li exclusivamente aquest codi.\n"
+        "3. Per a qualsevol consulta que demani quantitats, recomptes per districte o llistats d'identificadors, NO cridis l'eina del mapa; "
+        "executa codi Pandas (`value_counts()`, `groupby()`, etc.) i respon amb les dades textues en català.\n"
+        "Respon sempre de forma clara, professional i estrictament basat en el resultat de l'execució del teu codi."
+    )
+    
+    return create_pandas_dataframe_agent(
         llm,
         df_global,
         verbose=True, 
         agent_type="tool-calling", 
         allow_dangerous_code=True,
-        extra_tools=[obrir_mapa_per_codi_aca], # <-- Li donem el nou poder basat en el CSV
-        prefix=(
-            "Ets un assistent expert i un agent de dades per als pous de Barcelona. Respon sempre en català de forma educada i clara. "
-            "Totes les teves respostes han d'estar basades estrictament en la informació que trobis al fitxer CSV. "
-            "Si l'usuari et demana veure, obrir o mostrar un pou al mapa (Ex: 'abre pozo 5'), primer identifica quin és el seu "
-            "identificador a la columna 'Codi_Estacio_ACA' de la taula. Un cop el tinguis, crida immediatament a l'eina "
-            "'obrir_mapa_per_codi_aca' passant-li únicament aquest codi com a paràmetre. No intentis obrir el mapa pel teu compte ni inventis coordenades."
-        )
+        extra_tools=[actualizar_mapa_interactivo],
+        prefix=prefix_estricto
     )
-    return agent
 
-if __name__ == "__main__":
-    print("🤖 Inicialitzant l'Agent d'IA amb Cerca de Mapes per CSV...")
-    asistente = iniciar_asistente_ia()
+asistente = obtener_agente()
+
+# ==============================================================================
+# 5. DISEÑO DE LA INTERFAZ GRÁFICA MEJORADA
+# ==============================================================================
+st.title("🤖 Agent de Dades de Pous de Barcelona")
+
+if not os.getenv("GROQ_API_KEY"):
+    st.error("🔑 Falta la clau GROQ_API_KEY al fitxer .env")
+else:
+    # --- BARRA LATERAL: ENTRADAS VINCULANTES Y GUÍA DE PROMPTS ---
+    with st.sidebar:
+        st.header("📋 Prompts d'Exemple Vinculants")
+        st.markdown(
+            "Copia i enganxa aquests exemples exactes al xat per interactuar amb les columnes reals del teu CSV:"
+        )
+        
+        # Sugerencias formateadas con las columnas del CSV para copiar fácilmente
+        st.info("**Consulta de columnes i codis:**\n`Dona'm tots els codis de la columna Codi_Estacio_ACA`")
+        st.info("**Cerca per identificador:**\n`Codi_Estacio_ACA 5` o `Muestra el Codi_Estacio_ACA 10`")
+        st.info("**Estadística vinculada:**\n`Quants pous hi ha per cada Districte?`")
+        st.info("**Consulta de dades generals:**\n`Quines columnes té aquest fitxer CSV?`")
+        
+        if st.button("🔄 Netejar historial de xat"):
+            st.session_state.historial_conversacion = []
+            st.session_state.coordenadas_mapa = {"lat": 41.3851, "lon": 2.1734, "zoom": 12, "nombre": "Barcelona"}
+            st.rerun()
+
+    # Diseño de doble columna para la aplicación web principal
+    col1, col2 = st.columns([7, 5])
     
-    if asistente:
-        print("\n✅ Agent d'IA Actiu! Ara respondrà basant-se en les dades del teu CSV.")
-        print("Prova ordres com: 'abre el pozo 5', 'on està el pou amb codi 12?' o demana estadístiques de les columnes.")
-        print("Escriu 'salir' per acabar el xat.\n")
+    # --- COLUMNA 1: EL CHAT ---
+    with col1:
+        st.subheader("💬 Consulta interactiva al CSV")
         
-        historial_conversacion = []
+        container_chat = st.container(height=550)
+        with container_chat:
+            for msg in st.session_state.historial_conversacion:
+                if isinstance(msg, HumanMessage):
+                    with st.chat_message("user", avatar="🟢"):
+                        st.write(msg.content)
+                elif isinstance(msg, AIMessage):
+                    with st.chat_message("assistant"):
+                        st.write(msg.content)
         
-        while True:
-            pregunta = input("Pregunta a teves dades: ")
-            if pregunta.lower() == 'salir':
-                print("Fins aviat!")
-                break
-                
-            if pregunta.strip() == "":
-                continue
-                
-            try:
-                respuesta = asistente.invoke({
-                    "input": pregunta,
-                    "chat_history": historial_conversacion
-                })
-                
-                print(f"\n🤖 IA (Groq): {respuesta['output']}\n")
-                
-                historial_conversacion.append(HumanMessage(content=pregunta))
-                historial_conversacion.append(AIMessage(content=respuesta['output']))
-                
-                if len(historial_conversacion) > 6:
-                    historial_conversacion = historial_conversacion[-6:]
+        # El chat input interactúa con las reglas estrictas del agente
+        if pregunta := st.chat_input("Escriu aquí (Ex: 'Dona'm tots els codis de la columna Codi_Estacio_ACA')"):
+            with container_chat:
+                with st.chat_message("user", avatar="🟢"):
+                    st.write(pregunta)
+            
+            with st.spinner("L'agent està executant codi sobre el CSV..."):
+                try:
+                    respuesta = asistente.invoke({
+                        "input": pregunta,
+                        "chat_history": st.session_state.historial_conversacion
+                    })
                     
-            except Exception as e:
-                print(f"\n❌ Error al processar la petició: {e}\n")
+                    output_text = respuesta['output']
+                    
+                    with container_chat:
+                        with st.chat_message("assistant"):
+                            st.write(output_text)
+                    
+                    st.session_state.historial_conversacion.append(HumanMessage(content=pregunta))
+                    st.session_state.historial_conversacion.append(AIMessage(content=output_text))
+                    
+                    if len(st.session_state.historial_conversacion) > 8:
+                        st.session_state.historial_conversacion = st.session_state.historial_conversacion[-8:]
+                    
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ Error de lògica en processar la petició: {e}")
+
+    # --- COLUMNA 2: EL MAPA INTERACTIVO (Folium) ---
+    with col2:
+        st.subheader("📍 Visualització Dinàmica (Folium)")
+        st.success(f"📍 Marcador actual: **{st.session_state.coordenadas_mapa['nombre']}**")
+        
+        m = folium.Map(
+            location=[st.session_state.coordenadas_mapa["lat"], st.session_state.coordenadas_mapa["lon"]], 
+            zoom_start=st.session_state.coordenadas_mapa["zoom"]
+        )
+        
+        if st.session_state.coordenadas_mapa["nombre"] != "Barcelona":
+            folium.Marker(
+                [st.session_state.coordenadas_mapa["lat"], st.session_state.coordenadas_mapa["lon"]],
+                popup=st.session_state.coordenadas_mapa["nombre"],
+                tooltip=st.session_state.coordenadas_mapa["nombre"],
+                icon=folium.Icon(color="red", icon="cloud")
+            ).add_to(m)
+            
+        st_folium(m, width="100%", height=500, key="mapa_barcelona_interactiu")
